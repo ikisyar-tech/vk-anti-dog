@@ -122,15 +122,17 @@
             🔑 ПОЛУЧИТЬ ТОКЕН БАРКОВА
         </a>
         <div class="instruction">
+            <b>Как получить токен:</b><br>
             1. Нажмите на ссылку и войдите в ВКонтакте.<br>
             2. Разрешите доступ приложению.<br>
-            3. Скопируйте токен из адресной строки (после <b>access_token=</b>) и вставьте в поле ниже.
+            3. Скопируйте <b>всю ссылку</b> из адресной строки браузера.<br>
+            4. Вставьте её в поле ниже (можно также вставить только сам токен после <b>access_token=</b>).
         </div>
     </div>
 
     <div class="input-group">
         <label>Токен или ссылка</label>
-        <textarea id="tokenInput" placeholder="Вставьте полученный access_token..."></textarea>
+        <textarea id="tokenInput" placeholder="Вставьте ссылку из адресной строки или чистый токен..."></textarea>
     </div>
 
     <div class="input-group">
@@ -192,10 +194,11 @@
     async function initProcess() {
         if (isRunning) return;
         const raw = document.getElementById('tokenInput').value.trim();
+        // Извлекаем токен: если вставлена ссылка – берём значение параметра access_token, иначе считаем, что введён чистый токен
         const token = raw.includes('access_token=') ? raw.split('access_token=')[1].split('&')[0] : raw;
 
         if (token.length < 30) {
-            alert('Сначала вставьте токен!');
+            alert('Сначала вставьте корректный токен или ссылку с токеном!');
             return;
         }
 
@@ -217,7 +220,6 @@
         let hasMore = true;
 
         try {
-            // Цикл обхода лимита 5000 через проверку наличия данных в ответе
             while (hasMore && isRunning) {
                 log(`Запрос пачки друзей: смещение ${offset}...`);
                 const res = await vkCall('friends.get', { fields: 'deactivated', count: 5000, offset: offset }, token);
@@ -232,10 +234,9 @@
                 updateStat('total-friends', allFriends.length);
 
                 if (items.length < 5000) {
-                    hasMore = false; // Достигнут конец списка
+                    hasMore = false;
                 } else {
                     offset += 5000;
-                    // Имитация пролистывания (пауза между страницами)
                     await new Promise(r => setTimeout(r, 1200));
                 }
             }
@@ -274,7 +275,6 @@
                     log(`[${deleted}/${effectiveLimit}] Сбой id${dog.id}: ${delRes.error?.error_msg || 'unknown'}`, 'err');
                 }
 
-                // Человеческая пауза: рандом от 2.0 до 4.0 секунд
                 const waitTime = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
                 await new Promise(r => setTimeout(r, waitTime));
             }

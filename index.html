@@ -1,62 +1,27 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anti-Dog Cleaner</title>
-    <script src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js"></script>
-    <style>
-        body { font-family: sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
-        button { background: #447bba; color: white; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-size: 16px; width: 100%; }
-        button:disabled { background: #ccc; }
-        #log { margin-top: 20px; background: white; padding: 15px; border-radius: 8px; border: 1px solid #ddd; max-height: 300px; overflow-y: auto; font-size: 14px; line-height: 1.5; }
-        .success { color: green; }
-        .error { color: red; }
-        .info { color: #555; }
-    </style>
-</head>
-<body>
-
-    <h2>Очистка «собачек»</h2>
-    <p>Приложение найдет и удалит заблокированных и удаленных друзей.</p>
-    
-    <button id="startBtn" onclick="start()">Запустить очистку</button>
-    <div id="log">Ожидание запуска...</div>
-
-    <script>
-        // Инициализация моста
-        vkBridge.send('VKWebAppInit');
-
-        const logDiv = document.getElementById('log');
-        const startBtn = document.getElementById('startBtn');
-
-        function printLog(text, type = 'info') {
-            const span = document.createElement('div');
-            span.className = type;
-            span.innerHTML = `[${new Date().toLocaleTimeString()}] ${text}`;
-            logDiv.prepend(span);
-        }
-
-        // Функция задержки (чтобы не поймать Flood Control от ВК)
-        const delay = ms => new Promise(res => setTimeout(res, ms));
-
         async function start() {
             startBtn.disabled = true;
             logDiv.innerHTML = '';
             printLog('Запрос прав доступа...');
 
             try {
-                // 1. Получаем токен. ВАЖНО: appId подставится автоматически, если запускать внутри ВК
-                // Но для надежности можно вписать свой ID вторым параметром
+                // ЗАМЕНИ 0 на свой ID приложения (например: 51234567)
+                const APP_ID = 0; 
+
+                if (APP_ID === 0) {
+                    printLog('ОШИБКА: Замени APP_ID в коде на ID твоего приложения!', 'error');
+                    startBtn.disabled = false;
+                    return;
+                }
+
                 const auth = await vkBridge.send("VKWebAppGetAuthToken", { 
-                    "app_id": 0, // 0 означает текущее приложение
+                    "app_id": APP_ID, 
                     "scope": "friends" 
                 });
 
                 const token = auth.access_token;
                 printLog('Токен получен. Загружаю список друзей...', 'success');
 
-                // 2. Получаем список друзей с проверкой на "собачек"
+                // Дальше код без изменений...
                 const friendsData = await vkBridge.send("VKWebAppCallAPIMethod", {
                     "method": "friends.get",
                     "params": {
@@ -68,45 +33,24 @@
 
                 const allFriends = friendsData.response.items;
                 const dogs = allFriends.filter(f => f.deactivated);
+                printLog(`Всего друзей: ${allFriends.length}. «Собачек»: ${dogs.length}`);
 
-                printLog(`Всего друзей: ${allFriends.length}. Из них «собачек»: ${dogs.length}`);
-
-                if (dogs.length === 0) {
-                    printLog('Чистить некого. Ты молодец!', 'success');
-                    startBtn.disabled = false;
-                    return;
-                }
-
-                // 3. Цикл удаления
-                for (let i = 0; i < dogs.length; i++) {
-                    const dog = dogs[i];
-                    try {
-                        await vkBridge.send("VKWebAppCallAPIMethod", {
-                            "method": "friends.delete",
-                            "params": {
-                                "user_id": dog.id,
-                                "v": "5.131",
-                                "access_token": token
-                            }
-                        });
-                        printLog(`[${i+1}/${dogs.length}] Удален ID: ${dog.id}`, 'success');
-                    } catch (err) {
-                        printLog(`Ошибка удаления ID ${dog.id}: ${err.message}`, 'error');
-                    }
-                    
-                    // Пауза 400мс между удалениями (лимит 3 запроса в сек + запас)
+                for (let dog of dogs) {
+                    await vkBridge.send("VKWebAppCallAPIMethod", {
+                        "method": "friends.delete",
+                        "params": { "user_id": dog.id, "v": "5.131", "access_token": token }
+                    });
+                    printLog(`Удален ID: ${dog.id}`, 'success');
                     await delay(400);
                 }
-
-                printLog('Очистка завершена успешно!', 'success');
+                printLog('Готово!', 'success');
 
             } catch (error) {
-                printLog('Критическая ошибка: ' + error.message, 'error');
+                // Выводим подробности ошибки, чтобы не было undefined
+                const errorDetail = JSON.stringify(error);
+                printLog('Ошибка ВК: ' + errorDetail, 'error');
                 console.error(error);
             } finally {
                 startBtn.disabled = false;
             }
         }
-    </script>
-</body>
-</html>

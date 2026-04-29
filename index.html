@@ -1,80 +1,295 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Token & Dog Cleaner</title>
-    <script src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js"></script>
+    <title>VK Cleaner Ultra v2.1 (Deep Scan Fix)</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; background: #ebedf0; text-align: center; }
-        .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        button { background: #447bba; color: white; border: none; padding: 15px; border-radius: 10px; width: 100%; font-size: 16px; margin-bottom: 10px; }
-        #tokenArea { display: none; margin-top: 15px; padding: 10px; background: #f0f0f0; word-break: break-all; border-radius: 5px; font-size: 12px; border: 1px dashed #999; }
-        #log { margin-top: 20px; text-align: left; font-size: 13px; max-height: 200px; overflow-y: auto; }
-        .success { color: green; }
-        .error { color: red; }
+        body {
+            font-family: -apple-system, system-ui, "Helvetica Neue", Roboto, sans-serif;
+            background-color: #ebedf0;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .card {
+            background: white;
+            padding: 24px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            width: 95%;
+            max-width: 500px;
+        }
+        h2 { color: #2c3e50; text-align: center; margin: 0 0 10px 0; }
+        .desc { font-size: 13px; color: #7f8c8d; text-align: center; margin-bottom: 20px; line-height: 1.5; }
+
+        .barkov-box {
+            background: #f0f7ff;
+            border: 1px dashed #4a76a8;
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .barkov-link {
+            color: #4a76a8;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .instruction {
+            font-size: 12px;
+            color: #4a76a8;
+            margin-top: 10px;
+            line-height: 1.5;
+            text-align: left;
+        }
+
+        .input-group { margin-bottom: 15px; }
+        label { display: block; font-size: 11px; color: #95a5a6; font-weight: bold; margin: 0 0 5px 5px; text-transform: uppercase; }
+        textarea, input[type="number"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #dcdfe6;
+            border-radius: 12px;
+            box-sizing: border-box;
+            font-family: monospace;
+            font-size: 11px;
+            background: #fafafa;
+            outline: none;
+            resize: none;
+        }
+        input[type="number"] {
+            font-family: -apple-system, system-ui, "Helvetica Neue", Roboto, sans-serif;
+            font-size: 14px;
+        }
+        textarea {
+            height: 70px;
+        }
+
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px; }
+        button {
+            padding: 15px;
+            border: none;
+            border-radius: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 14px;
+            transition: transform 0.1s, background 0.2s;
+        }
+        button:active { transform: scale(0.98); }
+        .btn-start { background: #4a76a8; color: white; }
+        .btn-stop { background: #faebeb; color: #e74c3c; }
+
+        #status-display {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 15px;
+            border: 1px solid #edf0f2;
+        }
+        .stat-row { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; color: #34495e; }
+        .stat-val { font-weight: bold; color: #4a76a8; }
+
+        #log {
+            margin-top: 10px;
+            background: #2c3e50;
+            color: #ecf0f1;
+            border-radius: 10px;
+            padding: 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            height: 180px;
+            overflow-y: auto;
+            line-height: 1.4;
+            display: flex;
+            flex-direction: column-reverse;
+        }
+        .log-success { color: #2ecc71; }
+        .log-warn { color: #f1c40f; }
+        .log-err { color: #e74c3c; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h3>Управление токеном</h3>
-    <button onclick="getToken()">1. Получить рабочий токен</button>
-    <div id="tokenArea"></div>
-    <button id="copyBtn" style="display:none; background: #4caf50;" onclick="copyToken()">2. Копировать для Termux</button>
-    
-    <hr>
-    
-    <h3>Очистка (внутри ВК)</h3>
-    <button style="background: #ef5350;" onclick="startClean()">Запустить очистку</button>
+    <h2>Cleaner Ultra v2.1</h2>
+    <p class="desc">Исправлено сканирование 5000+ друзей. Добавлена имитация поведения человека.</p>
+
+    <div class="barkov-box">
+        <a href="https://vk.barkov.net/gettoken.aspx?a=get&m=f&s=friends" target="_blank" class="barkov-link">
+            🔑 ПОЛУЧИТЬ ТОКЕН БАРКОВА
+        </a>
+        <div class="instruction">
+            1. Нажмите на ссылку и войдите в ВКонтакте.<br>
+            2. Разрешите доступ приложению.<br>
+            3. Скопируйте токен из адресной строки (после <b>access_token=</b>) и вставьте в поле ниже.
+        </div>
+    </div>
+
+    <div class="input-group">
+        <label>Токен или ссылка</label>
+        <textarea id="tokenInput" placeholder="Вставьте полученный access_token..."></textarea>
+    </div>
+
+    <div class="input-group">
+        <label>Макс. удалений (0 = без лимита)</label>
+        <input type="number" id="limitInput" value="100" min="0" step="1">
+    </div>
+
+    <div class="controls">
+        <button class="btn-start" onclick="initProcess()">ЗАПУСТИТЬ</button>
+        <button class="btn-stop" onclick="stopProcess()">СТОП</button>
+    </div>
+
+    <div id="status-display">
+        <div class="stat-row"><span>Статус:</span> <span id="status-text" class="stat-val">Ожидание</span></div>
+        <div class="stat-row"><span>Друзей загружено:</span> <span id="total-friends" class="stat-val">0</span></div>
+        <div class="stat-row"><span>"Собачек" найдено:</span> <span id="dog-count" class="stat-val">0</span></div>
+        <div class="stat-row"><span>Удалено:</span> <span id="deleted-count" class="stat-val">0</span></div>
+    </div>
+
     <div id="log"></div>
 </div>
 
 <script>
-    vkBridge.send('VKWebAppInit');
-    let currentToken = '';
+    let isRunning = false;
+    const logDiv = document.getElementById('log');
 
-    async function getToken() {
-        try {
-            const auth = await vkBridge.send("VKWebAppGetAuthToken", {"app_id": 54566958, "scope": "friends"});
-            currentToken = auth.access_token;
-            document.getElementById('tokenArea').innerText = currentToken;
-            document.getElementById('tokenArea').style.display = 'block';
-            document.getElementById('copyBtn').style.display = 'block';
-        } catch (e) { alert("Ошибка получения: " + JSON.stringify(e)); }
+    function log(msg, type = '') {
+        const div = document.createElement('div');
+        if (type) div.className = 'log-' + type;
+        const time = new Date().toLocaleTimeString();
+        div.innerText = `[${time}] ${msg}`;
+        logDiv.appendChild(div);
     }
 
-    function copyToken() {
-        navigator.clipboard.writeText(currentToken);
-        alert("Токен в буфере! Вставляй его в Python-скрипт.");
+    function updateStat(id, val) { document.getElementById(id).innerText = val; }
+    function setStatus(text) { document.getElementById('status-text').innerText = text; }
+
+    function vkCall(method, params, token) {
+        return new Promise((resolve) => {
+            const cbName = 'vk_' + Math.random().toString(16).slice(2);
+            window[cbName] = (data) => {
+                delete window[cbName];
+                document.body.removeChild(script);
+                resolve(data);
+            };
+            const script = document.createElement('script');
+            const query = new URLSearchParams({...params, access_token: token, v: '5.131', callback: cbName});
+            script.src = `https://api.vk.com/method/${method}?${query}`;
+            document.body.appendChild(script);
+        });
     }
 
-    async function startClean() {
-        const log = document.getElementById('log');
-        log.innerHTML = "Поиск собак...<br>";
+    function stopProcess() {
+        isRunning = false;
+        log('Команда остановки получена', 'warn');
+        setStatus('Остановка...');
+    }
+
+    async function initProcess() {
+        if (isRunning) return;
+        const raw = document.getElementById('tokenInput').value.trim();
+        const token = raw.includes('access_token=') ? raw.split('access_token=')[1].split('&')[0] : raw;
+
+        if (token.length < 30) {
+            alert('Сначала вставьте токен!');
+            return;
+        }
+
+        const limitInput = document.getElementById('limitInput');
+        const limitVal = parseInt(limitInput.value, 10);
+        const limit = isNaN(limitVal) ? 0 : limitVal;
+
+        isRunning = true;
+        logDiv.innerHTML = '';
+        log(`Запуск глубокого сканирования (лимит удалений: ${limit > 0 ? limit : 'без ограничений'})...`);
+        setStatus('Сканирование');
+
+        updateStat('deleted-count', '0');
+        updateStat('dog-count', '0');
+        updateStat('total-friends', '0');
+
+        let allFriends = [];
+        let offset = 0;
+        let hasMore = true;
+
         try {
-            if(!currentToken) await getToken();
-            const data = await vkBridge.send("VKWebAppCallAPIMethod", {
-                "method": "friends.get",
-                "params": {"fields": "deactivated", "v": "5.131", "access_token": currentToken}
-            });
-            const dogs = data.response.items.filter(f => f.deactivated);
-            log.innerHTML += `Найдено собак: ${dogs.length}<br>`;
-            
-            for (let dog of dogs) {
-                try {
-                    await vkBridge.send("VKWebAppCallAPIMethod", {
-                        "method": "friends.delete",
-                        "params": {"user_id": dog.id, "v": "5.131", "access_token": currentToken}
-                    });
-                    log.innerHTML += `<span class="success">Удален id${dog.id}</span><br>`;
-                } catch (e) {
-                    log.innerHTML += `<span class="error">Блокировка Bridge: Удаление id${dog.id} невозможно через интерфейс приложения.</span><br>`;
-                    break; // Если один не удалился из-за прав, другие тоже не удалятся
+            // Цикл обхода лимита 5000 через проверку наличия данных в ответе
+            while (hasMore && isRunning) {
+                log(`Запрос пачки друзей: смещение ${offset}...`);
+                const res = await vkCall('friends.get', { fields: 'deactivated', count: 5000, offset: offset }, token);
+
+                if (res.error) {
+                    log('Ошибка API: ' + res.error.error_msg, 'err');
+                    break;
+                }
+
+                const items = res.response.items;
+                allFriends = allFriends.concat(items);
+                updateStat('total-friends', allFriends.length);
+
+                if (items.length < 5000) {
+                    hasMore = false; // Достигнут конец списка
+                } else {
+                    offset += 5000;
+                    // Имитация пролистывания (пауза между страницами)
+                    await new Promise(r => setTimeout(r, 1200));
                 }
             }
-        } catch (e) { log.innerHTML += "Ошибка: " + JSON.stringify(e); }
+
+            const dogs = allFriends.filter(f => f.deactivated);
+            updateStat('dog-count', dogs.length);
+            log(`Сканирование завершено. Найдено собак: ${dogs.length}`, 'warn');
+
+            if (dogs.length === 0) {
+                log('Собачек не обнаружено.', 'success');
+                isRunning = false;
+                setStatus('Завершено');
+                return;
+            }
+
+            const effectiveLimit = limit > 0 ? Math.min(limit, dogs.length) : dogs.length;
+            log(`Начинаю безопасное удаление (лимит: ${effectiveLimit}, паузы 2-4 сек)...`);
+            setStatus(`Удаление (${effectiveLimit})`);
+
+            let deleted = 0;
+            for (let i = 0; i < dogs.length; i++) {
+                if (!isRunning) break;
+                if (limit > 0 && deleted >= limit) {
+                    log(`Достигнут лимит удалений: ${limit}`, 'warn');
+                    break;
+                }
+
+                const dog = dogs[i];
+                const delRes = await vkCall('friends.delete', { user_id: dog.id }, token);
+
+                if (delRes.response && delRes.response.success) {
+                    deleted++;
+                    updateStat('deleted-count', `${deleted}/${effectiveLimit}`);
+                    log(`[${deleted}/${effectiveLimit}] Удален: id${dog.id}`, 'success');
+                } else {
+                    log(`[${deleted}/${effectiveLimit}] Сбой id${dog.id}: ${delRes.error?.error_msg || 'unknown'}`, 'err');
+                }
+
+                // Человеческая пауза: рандом от 2.0 до 4.0 секунд
+                const waitTime = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
+                await new Promise(r => setTimeout(r, waitTime));
+            }
+
+            log(isRunning ? 'Очистка успешно завершена!' : 'Процесс прерван', 'success');
+            setStatus(isRunning ? 'Завершено' : 'Прервано');
+            isRunning = false;
+
+        } catch (e) {
+            log('Критический сбой: ' + e.message, 'err');
+            isRunning = false;
+            setStatus('Ошибка');
+        }
     }
 </script>
+
 </body>
 </html>

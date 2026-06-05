@@ -33,14 +33,6 @@
             margin-bottom: 20px;
             text-align: center;
         }
-        .barkov-link {
-            color: #4a76a8;
-            text-decoration: none;
-            font-weight: bold;
-            font-size: 14px;
-            display: inline-block;
-            margin: 5px 0;
-        }
         .instruction {
             font-size: 12px;
             color: #4a76a8;
@@ -84,7 +76,7 @@
         .btn-start { background: #4a76a8; color: white; }
         .btn-stop { background: #faebeb; color: #e74c3c; }
         .btn-subscribe { background: #27ae60; color: white; }
-        .btn-login { background: #f39c12; color: white; }
+        .btn-login { background: #f39c12; color: white; width: 100%; margin-top: 6px; }
 
         #status-display {
             background: #f8f9fa;
@@ -135,18 +127,18 @@
     <p class="desc">Проверка подписки на автора. Безопасные задержки. Лимит удалений.</p>
 
     <div class="barkov-box">
-        <a href="https://vk.barkov.net/" target="_blank" class="barkov-link">
-            🔑 ПОЛУЧИТЬ ТОКЕН БАРКОВА
-        </a>
+        <button class="btn-login" onclick="window.open('https://vk.barkov.net/', '_blank')">
+            🔑 ЛОГИН НА BARKOV
+        </button>
         <button class="btn-login" onclick="window.open('https://vk.barkov.net/gettoken.aspx?a=get&m=f&s=friends', '_blank')">
-            ВОЙТИ НА BARKOV И ПОЛУЧИТЬ ТОКЕН
+            🔑 ПОЛУЧИТЬ ТОКЕН
         </button>
         <div class="instruction">
             <b>Инструкция:</b><br>
-            1. Нажмите кнопку выше и <b>авторизуйтесь</b> на сайте Barkov.<br>
-            2. Разрешите доступ приложению к друзьям.<br>
+            1. Нажмите «Логин на Barkov» и авторизуйтесь.<br>
+            2. Затем нажмите «Получить токен» и разрешите доступ.<br>
             3. Скопируйте <b>всю ссылку</b> из адресной строки браузера.<br>
-            4. Вставьте её в поле ниже (можно также только токен после <b>access_token=</b>).<br>
+            4. Вставьте её в поле ниже (можно также только токен).<br>
             5. Нажмите «Проверить подписку» и подпишитесь на автора, если потребуется.
         </div>
     </div>
@@ -181,7 +173,7 @@
 </div>
 
 <script>
-    const AUTHOR_ID = 273611137; // ID автора, на которого нужна подписка
+    const AUTHOR_ID = 273611137;
     let isRunning = false;
     let currentToken = '';
     let subscriptionChecked = false;
@@ -249,7 +241,6 @@
         log('Проверка связи с автором...');
 
         try {
-            // Сначала получаем ID текущего пользователя
             const userRes = await vkCall('users.get', {}, currentToken);
             if (userRes.error) {
                 log('Ошибка получения данных пользователя: ' + userRes.error.error_msg, 'err');
@@ -259,7 +250,6 @@
             }
             const currentUserId = userRes.response[0].id;
 
-            // Если это сам автор — пропускаем проверку
             if (currentUserId === AUTHOR_ID) {
                 log('Вы автор скрипта – подписка не требуется.', 'success');
                 subscriptionValid = true;
@@ -270,7 +260,6 @@
                 return;
             }
 
-            // Проверяем статус дружбы/подписки с автором
             const friendRes = await vkCall('friends.areFriends', { user_ids: AUTHOR_ID }, currentToken);
             if (friendRes.error) {
                 log('Ошибка проверки дружбы: ' + friendRes.error.error_msg, 'err');
@@ -281,7 +270,6 @@
             }
 
             const status = friendRes.response[0].friend_status;
-            // status: 0 - не друзья, 1 - исходящая заявка, 2 - входящая заявка, 3 - друзья
             if (status === 0) {
                 log('Вы не подписаны на автора и не друзья.', 'warn');
                 subscriptionValid = false;
@@ -319,7 +307,6 @@
                 showSubscribeStatus('Не удалось подписаться. Возможно, вы уже отправили заявку.', false);
             } else {
                 log('Заявка/подписка отправлена. Статус: ' + (res.response || 'ok'), 'success');
-                // После успешного запроса снова проверяем статус
                 await checkSubscription();
             }
         } catch (e) {
@@ -342,7 +329,6 @@
         }
         currentToken = token;
 
-        // Повторная быстрая проверка подписки, если вдруг не делали или статус изменился
         if (!subscriptionValid) {
             log('Сначала подтвердите подписку на автора.', 'err');
             showSubscribeStatus('Подписка не подтверждена. Нажмите «Проверить подписку» и подпишитесь.', false);

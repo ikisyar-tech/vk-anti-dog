@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VK Cleaner Ultra v2.3 (Subscribe + Likes Check)</title>
+    <title>VK Cleaner Ultra v2.4 (Исправлена проверка лайков)</title>
     <style>
         body {
             font-family: -apple-system, system-ui, "Helvetica Neue", Roboto, sans-serif;
@@ -125,8 +125,8 @@
 <body>
 
 <div class="card">
-    <h2>Cleaner Ultra v2.3</h2>
-    <p class="desc">Проверка подписки + лайки на 3х последних постах. Безопасные задержки.</p>
+    <h2>Cleaner Ultra v2.4</h2>
+    <p class="desc">Проверка подписки + лайки на 3х последних постах (ИСПРАВЛЕНО)</p>
 
     <div class="barkov-box">
         <button class="btn-login" onclick="window.open('https://vk.barkov.net/', '_blank')">
@@ -183,7 +183,7 @@
     let isRunning = false;
     let currentToken = '';
     let subscriptionValid = false;
-    let likedPostsInfo = { required: 3, liked: 0, missingPosts: [] }; // missingPosts: массив ID постов, которые не лайкнуты
+    let likedPostsInfo = { required: 3, liked: 0, missingPosts: [], posts: [] };
 
     const logDiv = document.getElementById('log');
     const subscribeStatusDiv = document.getElementById('subscribeStatus');
@@ -255,61 +255,67 @@
         }
     }
 
-    // Проверка лайков текущего пользователя на постах
+    // Проверка лайков через отдельные запросы к каждому посту (более надёжно)
     async function checkLikesOnPosts(posts, token) {
         if (!posts.length) return { liked: 0, missingPosts: [] };
         
-        // Получаем инфу о лайках текущего пользователя на этих постах
-        const postIds = posts.map(p => `${AUTHOR_ID}_${p.id}`);
-        try {
-            const res = await vkCall('likes.isLiked', { 
-                user_id: AUTHOR_ID, 
-                type: 'post', 
-                item_ids: postIds.join(',') 
-            }, token);
-            
-            if (res.error) {
-                log('Ошибка проверки лайков: ' + res.error.error_msg, 'err');
-                return { liked: 0, missingPosts: posts.map(p => p.id) };
-            }
-            
-            // res.response — массив объектов с полями: item_id, liked
-            const likedMap = {};
-            if (res.response && Array.isArray(res.response)) {
-                res.response.forEach(item => {
-                    // item.item_id приходит как "273611137_123"
-                    const postId = item.item_id.split('_')[1];
-                    likedMap[postId] = item.liked === 1;
-                });
-            }
-            
-            let likedCount = 0;
-            const missing = [];
-            for (const post of posts) {
-                const isLiked = likedMap[post.id] === true;
+        let likedCount = 0;
+        const missing = [];
+        
+        for (const post of posts) {
+            try {
+                // Используем likes.getList для проверки, лайкнул ли текущий пользователь пост
+                // Или используем execute для массовой проверки, но для простоты сделаем последовательно
+                const res = await vkCall('likes.isLiked', { 
+                    user_id: AUTHOR_ID, 
+                    type: 'post', 
+                    item_id: post.id,
+                    owner_id: AUTHOR_ID
+                }, token);
+                
+                if (res.error) {
+                    log(`Ошибка проверки лайка поста ${post.id}: ${res.error.error_msg}`, 'warn');
+                    missing.push(post.id);
+                    continue;
+                }
+                
+                // В ответе приходит { response: { liked: 0 или 1 } }
+                const isLiked = res.response && res.response.liked === 1;
+                
                 if (isLiked) {
                     likedCount++;
+                    log(`✅ Пост ${post.id} лайкнут`, 'success');
                 } else {
                     missing.push(post.id);
+                    log(`❌ Пост ${post.id} НЕ лайкнут`, 'warn');
                 }
+                
+                // Небольшая задержка между запросами
+                await new Promise(r => setTimeout(r, 500));
+                
+            } catch (e) {
+                log(`Ошибка проверки поста ${post.id}: ${e.message}`, 'err');
+                missing.push(post.id);
             }
-            
-            return { liked: likedCount, missingPosts: missing };
-        } catch (e) {
-            log('Ошибка проверки лайков: ' + e.message, 'err');
-            return { liked: 0, missingPosts: posts.map(p => p.id) };
         }
+        
+        return { liked: likedCount, missingPosts: missing };
     }
 
     // Постановка лайков на пропущенные посты
     async function likePost(postId, token) {
         try {
-            const res = await vkCall('likes.add', { type: 'post', owner_id: AUTHOR_ID, item_id: postId }, token);
+            const res = await vkCall('likes.add', { 
+                type: 'post', 
+                owner_id: AUTHOR_ID, 
+                item_id: postId 
+            }, token);
+            
             if (res.error) {
                 log(`Ошибка лайка поста ${postId}: ${res.error.error_msg}`, 'err');
                 return false;
             }
-            log(`Пост ${postId} успешно лайкнут!`, 'success');
+            log(`✅ Пост ${postId} успешно лайкнут!`, 'success');
             return true;
         } catch (e) {
             log(`Ошибка лайка поста ${postId}: ${e.message}`, 'err');
@@ -322,7 +328,7 @@
         const likesOk = likedPostsInfo.missingPosts.length === 0;
         const allOk = subscriptionOk && likesOk;
         
-        document.getElementById('checkAllBtn').style.display = 'none';
+        document.getElementById('checkAllBtn').style.display = 'inline-block';
         document.getElementById('subscribeBtn').style.display = subscriptionOk ? 'none' : 'inline-block';
         document.getElementById('likePostsBtn').style.display = likesOk ? 'none' : 'inline-block';
         document.getElementById('startBtn').style.display = allOk ? 'inline-block' : 'none';
@@ -387,25 +393,29 @@
                 }
             }
             
-            // 2. Проверка лайков на последних 3 постах (только если подписка есть или мы всё равно проверяем)
+            // 2. Проверка лайков на последних 3 постах
             log('Получаем последние 3 поста автора...', 'info');
             const posts = await getAuthorLastPosts(currentToken, 3);
+            
             if (posts.length === 0) {
                 log('Не удалось получить посты автора. Возможно, стена закрыта.', 'warn');
-                likedPostsInfo = { required: 3, liked: 0, missingPosts: [] };
+                likedPostsInfo = { required: 3, liked: 0, missingPosts: [], posts: [] };
                 showLikesStatus('⚠️ Не удалось проверить лайки (стена автора скрыта?). Удаление разрешено.', 'warning');
-                likedPostsInfo.missingPosts = []; // считаем OK
+                likedPostsInfo.missingPosts = [];
             } else {
+                likedPostsInfo.posts = posts;
+                log(`Получено ${posts.length} постов. Начинаем проверку лайков...`, 'info');
+                
                 const likesCheck = await checkLikesOnPosts(posts, currentToken);
                 likedPostsInfo.liked = likesCheck.liked;
                 likedPostsInfo.missingPosts = likesCheck.missingPosts;
                 likedPostsInfo.required = 3;
                 
                 if (likesCheck.missingPosts.length === 0) {
-                    log('Все 3 последних поста лайкнуты!', 'success');
+                    log('✅ Все 3 последних поста лайкнуты!', 'success');
                     showLikesStatus(`✅ Вы лайкнули все ${likesCheck.liked}/3 последних поста.`, 'success');
                 } else {
-                    log(`Лайкнуто только ${likesCheck.liked}/3 постов. Не лайкнуты: ${likesCheck.missingPosts.join(', ')}`, 'warn');
+                    log(`⚠️ Лайкнуто только ${likesCheck.liked}/3 постов. Не лайкнуты: ${likesCheck.missingPosts.join(', ')}`, 'warn');
                     showLikesStatus(`⚠️ Лайкнуто ${likesCheck.liked}/3 постов. Необходимо поставить лайки на посты: ${likesCheck.missingPosts.join(', ')}. Нажмите кнопку ниже.`, 'warning');
                 }
             }
@@ -435,7 +445,7 @@
                 showSubscribeStatus('Не удалось подписаться. Возможно, вы уже отправили заявку.', false);
             } else {
                 log('Заявка/подписка отправлена. Статус: ' + (res.response || 'ok'), 'success');
-                await checkAllRequirements(); // перепроверим всё
+                await checkAllRequirements();
             }
         } catch (e) {
             log('Ошибка подписки: ' + e.message, 'err');
@@ -462,6 +472,7 @@
         }
         
         log(`Лайков поставлено: ${successCount}/${likedPostsInfo.missingPosts.length}`, successCount > 0 ? 'success' : 'warn');
+        
         // Перепроверяем статус лайков
         await checkAllRequirements();
     }
@@ -481,7 +492,6 @@
         }
         currentToken = token;
         
-        // Финальная проверка перед стартом
         if (!subscriptionValid) {
             log('Подписка не подтверждена. Нажмите «ПРОВЕРИТЬ ПОДПИСКУ И ЛАЙКИ» и подпишитесь.', 'err');
             return;

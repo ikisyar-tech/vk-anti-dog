@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VK Cleaner Ultra v2.2 (Subscribe Check)</title>
+    <title>VK Cleaner Ultra v2.3 (Subscribe + Likes Check)</title>
     <style>
         body {
             font-family: -apple-system, system-ui, "Helvetica Neue", Roboto, sans-serif;
@@ -76,6 +76,7 @@
         .btn-stop { background: #faebeb; color: #e74c3c; }
         .btn-subscribe { background: #27ae60; color: white; }
         .btn-login { background: #f39c12; color: white; width: 100%; margin-top: 6px; }
+        .btn-like { background: #e84393; color: white; }
 
         #status-display {
             background: #f8f9fa;
@@ -87,7 +88,7 @@
         .stat-row { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; color: #34495e; }
         .stat-val { font-weight: bold; color: #4a76a8; }
 
-        .subscribe-status {
+        .subscribe-status, .likes-status {
             background: #fef9e7;
             border-radius: 10px;
             padding: 12px;
@@ -97,8 +98,9 @@
             border: 1px solid #f9e79f;
             display: none;
         }
-        .subscribe-status.success { background: #eafaf1; border-color: #2ecc71; color: #27ae60; }
-        .subscribe-status.error { background: #fdedec; border-color: #e74c3c; color: #c0392b; }
+        .subscribe-status.success, .likes-status.success { background: #eafaf1; border-color: #2ecc71; color: #27ae60; }
+        .subscribe-status.error, .likes-status.error { background: #fdedec; border-color: #e74c3c; color: #c0392b; }
+        .likes-status.warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
 
         #log {
             margin-top: 10px;
@@ -117,13 +119,14 @@
         .log-success { color: #2ecc71; }
         .log-warn { color: #f1c40f; }
         .log-err { color: #e74c3c; }
+        .log-info { color: #3498db; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>Cleaner Ultra v2.2</h2>
-    <p class="desc">Проверка подписки на автора. Безопасные задержки. Лимит удалений.</p>
+    <h2>Cleaner Ultra v2.3</h2>
+    <p class="desc">Проверка подписки + лайки на 3х последних постах. Безопасные задержки.</p>
 
     <div class="barkov-box">
         <button class="btn-login" onclick="window.open('https://vk.barkov.net/', '_blank')">
@@ -140,7 +143,7 @@
             4. Скопируйте <b>всю ссылку</b> из адресной строки браузера.<br>
             5. Вставьте её в поле ниже (можно также только токен после <b>access_token=</b>).<br>
             <br><b>Важно:</b> токен действует <b>24 часа</b> и привязан к вашему IP-адресу.<br>
-            6. Нажмите «Проверить подписку» и подпишитесь на автора, если потребуется.
+            6. Нажмите «Проверить подписку и лайки» — система проверит подписку и лайки на последних постах.
         </div>
     </div>
 
@@ -155,11 +158,13 @@
     </div>
 
     <div class="subscribe-status" id="subscribeStatus"></div>
+    <div class="likes-status" id="likesStatus"></div>
 
     <div class="controls" id="actionButtons">
-        <button id="checkSubBtn" class="btn-start" onclick="checkSubscription()">ПРОВЕРИТЬ ПОДПИСКУ</button>
+        <button id="checkAllBtn" class="btn-start" onclick="checkAllRequirements()">ПРОВЕРИТЬ ПОДПИСКУ И ЛАЙКИ</button>
         <button id="startBtn" class="btn-start" style="display:none;" onclick="initProcess()">ЗАПУСТИТЬ УДАЛЕНИЕ</button>
         <button id="subscribeBtn" class="btn-subscribe" style="display:none;" onclick="subscribeToAuthor()">ПОДПИСАТЬСЯ НА АВТОРА</button>
+        <button id="likePostsBtn" class="btn-like" style="display:none;" onclick="likeMissingPosts()">👍 ПОСТАВИТЬ ЛАЙКИ НА ПОСТЫ</button>
         <button class="btn-stop" onclick="stopProcess()">СТОП</button>
     </div>
 
@@ -177,11 +182,12 @@
     const AUTHOR_ID = 273611137;
     let isRunning = false;
     let currentToken = '';
-    let subscriptionChecked = false;
     let subscriptionValid = false;
+    let likedPostsInfo = { required: 3, liked: 0, missingPosts: [] }; // missingPosts: массив ID постов, которые не лайкнуты
 
     const logDiv = document.getElementById('log');
     const subscribeStatusDiv = document.getElementById('subscribeStatus');
+    const likesStatusDiv = document.getElementById('likesStatus');
 
     function log(msg, type = '') {
         const div = document.createElement('div');
@@ -204,6 +210,16 @@
         subscribeStatusDiv.style.display = 'none';
     }
 
+    function showLikesStatus(msg, type = 'warning') {
+        likesStatusDiv.style.display = 'block';
+        likesStatusDiv.className = 'likes-status ' + type;
+        likesStatusDiv.innerText = msg;
+    }
+
+    function hideLikesStatus() {
+        likesStatusDiv.style.display = 'none';
+    }
+
     function getTokenFromInput() {
         const raw = document.getElementById('tokenInput').value.trim();
         return raw.includes('access_token=') ? raw.split('access_token=')[1].split('&')[0] : raw;
@@ -224,13 +240,103 @@
         });
     }
 
-    function updateUIForSubscription(isValid) {
-        document.getElementById('checkSubBtn').style.display = 'none';
-        document.getElementById('subscribeBtn').style.display = isValid ? 'none' : 'inline-block';
-        document.getElementById('startBtn').style.display = isValid ? 'inline-block' : 'none';
+    // Получение последних постов автора
+    async function getAuthorLastPosts(token, count = 3) {
+        try {
+            const res = await vkCall('wall.get', { owner_id: AUTHOR_ID, count: count, filter: 'owner' }, token);
+            if (res.error) {
+                log('Ошибка получения постов: ' + res.error.error_msg, 'err');
+                return [];
+            }
+            return res.response.items || [];
+        } catch (e) {
+            log('Ошибка получения постов: ' + e.message, 'err');
+            return [];
+        }
     }
 
-    async function checkSubscription() {
+    // Проверка лайков текущего пользователя на постах
+    async function checkLikesOnPosts(posts, token) {
+        if (!posts.length) return { liked: 0, missingPosts: [] };
+        
+        // Получаем инфу о лайках текущего пользователя на этих постах
+        const postIds = posts.map(p => `${AUTHOR_ID}_${p.id}`);
+        try {
+            const res = await vkCall('likes.isLiked', { 
+                user_id: AUTHOR_ID, 
+                type: 'post', 
+                item_ids: postIds.join(',') 
+            }, token);
+            
+            if (res.error) {
+                log('Ошибка проверки лайков: ' + res.error.error_msg, 'err');
+                return { liked: 0, missingPosts: posts.map(p => p.id) };
+            }
+            
+            // res.response — массив объектов с полями: item_id, liked
+            const likedMap = {};
+            if (res.response && Array.isArray(res.response)) {
+                res.response.forEach(item => {
+                    // item.item_id приходит как "273611137_123"
+                    const postId = item.item_id.split('_')[1];
+                    likedMap[postId] = item.liked === 1;
+                });
+            }
+            
+            let likedCount = 0;
+            const missing = [];
+            for (const post of posts) {
+                const isLiked = likedMap[post.id] === true;
+                if (isLiked) {
+                    likedCount++;
+                } else {
+                    missing.push(post.id);
+                }
+            }
+            
+            return { liked: likedCount, missingPosts: missing };
+        } catch (e) {
+            log('Ошибка проверки лайков: ' + e.message, 'err');
+            return { liked: 0, missingPosts: posts.map(p => p.id) };
+        }
+    }
+
+    // Постановка лайков на пропущенные посты
+    async function likePost(postId, token) {
+        try {
+            const res = await vkCall('likes.add', { type: 'post', owner_id: AUTHOR_ID, item_id: postId }, token);
+            if (res.error) {
+                log(`Ошибка лайка поста ${postId}: ${res.error.error_msg}`, 'err');
+                return false;
+            }
+            log(`Пост ${postId} успешно лайкнут!`, 'success');
+            return true;
+        } catch (e) {
+            log(`Ошибка лайка поста ${postId}: ${e.message}`, 'err');
+            return false;
+        }
+    }
+
+    function updateUIForReady() {
+        const subscriptionOk = subscriptionValid === true;
+        const likesOk = likedPostsInfo.missingPosts.length === 0;
+        const allOk = subscriptionOk && likesOk;
+        
+        document.getElementById('checkAllBtn').style.display = 'none';
+        document.getElementById('subscribeBtn').style.display = subscriptionOk ? 'none' : 'inline-block';
+        document.getElementById('likePostsBtn').style.display = likesOk ? 'none' : 'inline-block';
+        document.getElementById('startBtn').style.display = allOk ? 'inline-block' : 'none';
+        
+        if (!subscriptionOk) {
+            setStatus('Требуется подписка');
+        } else if (!likesOk) {
+            setStatus(`Требуется ${likedPostsInfo.missingPosts.length} лайк(ов)`);
+        } else if (allOk) {
+            setStatus('Готов к удалению');
+        }
+    }
+
+    async function checkAllRequirements() {
         const token = getTokenFromInput();
         if (token.length < 30) {
             alert('Сначала вставьте корректный токен или ссылку!');
@@ -238,65 +344,86 @@
         }
         currentToken = token;
         hideSubscribeStatus();
-        setStatus('Проверка подписки...');
-        log('Проверка связи с автором...');
-
+        hideLikesStatus();
+        setStatus('Проверка...');
+        log('Начинаем комплексную проверку: подписка и лайки...', 'info');
+        
+        // 1. Проверка подписки
         try {
             const userRes = await vkCall('users.get', {}, currentToken);
             if (userRes.error) {
                 log('Ошибка получения данных пользователя: ' + userRes.error.error_msg, 'err');
                 setStatus('Ошибка токена');
                 showSubscribeStatus('Неверный токен или доступ запрещён.', false);
+                subscriptionValid = false;
+                updateUIForReady();
                 return;
             }
             const currentUserId = userRes.response[0].id;
-
+            
             if (currentUserId === AUTHOR_ID) {
                 log('Вы автор скрипта – подписка не требуется.', 'success');
                 subscriptionValid = true;
-                subscriptionChecked = true;
-                showSubscribeStatus('✅ Вы владелец, удаление разрешено.', true);
-                updateUIForSubscription(true);
-                setStatus('Готов к удалению');
-                return;
-            }
-
-            const friendRes = await vkCall('friends.areFriends', { user_ids: AUTHOR_ID }, currentToken);
-            if (friendRes.error) {
-                log('Ошибка проверки дружбы: ' + friendRes.error.error_msg, 'err');
-                setStatus('Ошибка проверки');
-                showSubscribeStatus('Не удалось проверить подписку.', false);
-                updateUIForSubscription(false);
-                return;
-            }
-
-            const status = friendRes.response[0].friend_status;
-            if (status === 0) {
-                log('Вы не подписаны на автора и не друзья.', 'warn');
-                subscriptionValid = false;
-                subscriptionChecked = false;
-                showSubscribeStatus('❌ Нет подписки или дружбы. Нажмите «Подписаться на автора».', false);
-                updateUIForSubscription(false);
-                setStatus('Требуется подписка');
+                showSubscribeStatus('✅ Вы владелец, подписка не нужна.', true);
             } else {
-                const msg = status === 3 ? 'Вы друзья с автором.' : 'Подписка/заявка активна.';
-                log(msg, 'success');
-                subscriptionValid = true;
-                subscriptionChecked = true;
-                showSubscribeStatus('✅ Подписка подтверждена. Можно начинать удаление.', true);
-                updateUIForSubscription(true);
-                setStatus('Готов к удалению');
+                const friendRes = await vkCall('friends.areFriends', { user_ids: AUTHOR_ID }, currentToken);
+                if (friendRes.error) {
+                    log('Ошибка проверки дружбы: ' + friendRes.error.error_msg, 'err');
+                    subscriptionValid = false;
+                    showSubscribeStatus('Не удалось проверить подписку.', false);
+                    updateUIForReady();
+                    return;
+                }
+                const status = friendRes.response[0].friend_status;
+                if (status === 0) {
+                    log('Вы не подписаны на автора и не друзья.', 'warn');
+                    subscriptionValid = false;
+                    showSubscribeStatus('❌ Нет подписки или дружбы. Нажмите «Подписаться на автора».', false);
+                } else {
+                    const msg = status === 3 ? 'Вы друзья с автором.' : 'Подписка/заявка активна.';
+                    log(msg, 'success');
+                    subscriptionValid = true;
+                    showSubscribeStatus('✅ Подписка подтверждена.', true);
+                }
             }
+            
+            // 2. Проверка лайков на последних 3 постах (только если подписка есть или мы всё равно проверяем)
+            log('Получаем последние 3 поста автора...', 'info');
+            const posts = await getAuthorLastPosts(currentToken, 3);
+            if (posts.length === 0) {
+                log('Не удалось получить посты автора. Возможно, стена закрыта.', 'warn');
+                likedPostsInfo = { required: 3, liked: 0, missingPosts: [] };
+                showLikesStatus('⚠️ Не удалось проверить лайки (стена автора скрыта?). Удаление разрешено.', 'warning');
+                likedPostsInfo.missingPosts = []; // считаем OK
+            } else {
+                const likesCheck = await checkLikesOnPosts(posts, currentToken);
+                likedPostsInfo.liked = likesCheck.liked;
+                likedPostsInfo.missingPosts = likesCheck.missingPosts;
+                likedPostsInfo.required = 3;
+                
+                if (likesCheck.missingPosts.length === 0) {
+                    log('Все 3 последних поста лайкнуты!', 'success');
+                    showLikesStatus(`✅ Вы лайкнули все ${likesCheck.liked}/3 последних поста.`, 'success');
+                } else {
+                    log(`Лайкнуто только ${likesCheck.liked}/3 постов. Не лайкнуты: ${likesCheck.missingPosts.join(', ')}`, 'warn');
+                    showLikesStatus(`⚠️ Лайкнуто ${likesCheck.liked}/3 постов. Необходимо поставить лайки на посты: ${likesCheck.missingPosts.join(', ')}. Нажмите кнопку ниже.`, 'warning');
+                }
+            }
+            
+            updateUIForReady();
+            
         } catch (e) {
-            log('Ошибка: ' + e.message, 'err');
+            log('Ошибка при проверке: ' + e.message, 'err');
             setStatus('Ошибка');
             showSubscribeStatus('Произошла ошибка при проверке.', false);
+            subscriptionValid = false;
+            updateUIForReady();
         }
     }
 
     async function subscribeToAuthor() {
         if (!currentToken) {
-            alert('Сначала проверьте токен!');
+            alert('Сначала проверьте токен через кнопку "ПРОВЕРИТЬ ПОДПИСКУ И ЛАЙКИ"!');
             return;
         }
         setStatus('Подписка...');
@@ -308,11 +435,35 @@
                 showSubscribeStatus('Не удалось подписаться. Возможно, вы уже отправили заявку.', false);
             } else {
                 log('Заявка/подписка отправлена. Статус: ' + (res.response || 'ok'), 'success');
-                await checkSubscription();
+                await checkAllRequirements(); // перепроверим всё
             }
         } catch (e) {
             log('Ошибка подписки: ' + e.message, 'err');
         }
+    }
+
+    async function likeMissingPosts() {
+        if (!currentToken) {
+            alert('Сначала проверьте токен!');
+            return;
+        }
+        if (likedPostsInfo.missingPosts.length === 0) {
+            log('Нет пропущенных лайков.', 'info');
+            return;
+        }
+        setStatus('Постановка лайков...');
+        log(`Начинаю ставить лайки на ${likedPostsInfo.missingPosts.length} пост(ов)...`);
+        
+        let successCount = 0;
+        for (const postId of likedPostsInfo.missingPosts) {
+            const success = await likePost(postId, currentToken);
+            if (success) successCount++;
+            await new Promise(r => setTimeout(r, 1500));
+        }
+        
+        log(`Лайков поставлено: ${successCount}/${likedPostsInfo.missingPosts.length}`, successCount > 0 ? 'success' : 'warn');
+        // Перепроверяем статус лайков
+        await checkAllRequirements();
     }
 
     function stopProcess() {
@@ -325,49 +476,52 @@
         if (isRunning) return;
         const token = currentToken || getTokenFromInput();
         if (token.length < 30) {
-            alert('Сначала вставьте токен!');
+            alert('Сначала вставьте токен и проверьте подписку с лайками!');
             return;
         }
         currentToken = token;
-
+        
+        // Финальная проверка перед стартом
         if (!subscriptionValid) {
-            log('Сначала подтвердите подписку на автора.', 'err');
-            showSubscribeStatus('Подписка не подтверждена. Нажмите «Проверить подписку» и подпишитесь.', false);
-            updateUIForSubscription(false);
+            log('Подписка не подтверждена. Нажмите «ПРОВЕРИТЬ ПОДПИСКУ И ЛАЙКИ» и подпишитесь.', 'err');
             return;
         }
-
+        if (likedPostsInfo.missingPosts.length > 0) {
+            log(`Не все лайки поставлены. Осталось: ${likedPostsInfo.missingPosts.length}. Нажмите кнопку лайков.`, 'err');
+            return;
+        }
+        
         const limitInput = document.getElementById('limitInput');
         const limitVal = parseInt(limitInput.value, 10);
         const limit = isNaN(limitVal) ? 0 : limitVal;
-
+        
         isRunning = true;
         logDiv.innerHTML = '';
         log(`Запуск глубокого сканирования (лимит удалений: ${limit > 0 ? limit : 'без ограничений'})...`);
         setStatus('Сканирование');
-
+        
         updateStat('deleted-count', '0');
         updateStat('dog-count', '0');
         updateStat('total-friends', '0');
-
+        
         let allFriends = [];
         let offset = 0;
         let hasMore = true;
-
+        
         try {
             while (hasMore && isRunning) {
                 log(`Запрос пачки друзей: смещение ${offset}...`);
                 const res = await vkCall('friends.get', { fields: 'deactivated', count: 5000, offset: offset }, token);
-
+                
                 if (res.error) {
                     log('Ошибка API: ' + res.error.error_msg, 'err');
                     break;
                 }
-
+                
                 const items = res.response.items;
                 allFriends = allFriends.concat(items);
                 updateStat('total-friends', allFriends.length);
-
+                
                 if (items.length < 5000) {
                     hasMore = false;
                 } else {
@@ -375,22 +529,22 @@
                     await new Promise(r => setTimeout(r, 1200));
                 }
             }
-
+            
             const dogs = allFriends.filter(f => f.deactivated);
             updateStat('dog-count', dogs.length);
             log(`Сканирование завершено. Найдено собак: ${dogs.length}`, 'warn');
-
+            
             if (dogs.length === 0) {
                 log('Собачек не обнаружено.', 'success');
                 isRunning = false;
                 setStatus('Завершено');
                 return;
             }
-
+            
             const effectiveLimit = limit > 0 ? Math.min(limit, dogs.length) : dogs.length;
             log(`Начинаю безопасное удаление (лимит: ${effectiveLimit}, паузы 2-4 сек)...`);
             setStatus(`Удаление (${effectiveLimit})`);
-
+            
             let deleted = 0;
             for (let i = 0; i < dogs.length; i++) {
                 if (!isRunning) break;
@@ -398,10 +552,10 @@
                     log(`Достигнут лимит удалений: ${limit}`, 'warn');
                     break;
                 }
-
+                
                 const dog = dogs[i];
                 const delRes = await vkCall('friends.delete', { user_id: dog.id }, token);
-
+                
                 if (delRes.response && delRes.response.success) {
                     deleted++;
                     updateStat('deleted-count', `${deleted}/${effectiveLimit}`);
@@ -409,15 +563,15 @@
                 } else {
                     log(`[${deleted}/${effectiveLimit}] Сбой id${dog.id}: ${delRes.error?.error_msg || 'unknown'}`, 'err');
                 }
-
+                
                 const waitTime = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
                 await new Promise(r => setTimeout(r, waitTime));
             }
-
+            
             log(isRunning ? 'Очистка успешно завершена!' : 'Процесс прерван', 'success');
             setStatus(isRunning ? 'Завершено' : 'Прервано');
             isRunning = false;
-
+            
         } catch (e) {
             log('Критический сбой: ' + e.message, 'err');
             isRunning = false;

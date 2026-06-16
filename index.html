@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VK Cleaner Ultra v2.6 (Исправлено удаление)</title>
+    <title>VK Cleaner Ultra v2.8 (Правильная отписка)</title>
     <style>
         body {
             font-family: -apple-system, system-ui, "Helvetica Neue", Roboto, sans-serif;
@@ -129,8 +129,8 @@
 <body>
 
 <div class="card">
-    <h2>Cleaner Ultra v2.6</h2>
-    <p class="desc">Проверка подписки + лайки. Удаление собак из друзей и подписчиков.</p>
+    <h2>Cleaner Ultra v2.8</h2>
+    <p class="desc">Правильная отписка от подписчиков без бана</p>
 
     <div class="barkov-box">
         <button class="btn-login" onclick="window.open('https://vk.barkov.net/', '_blank')">
@@ -167,7 +167,7 @@
     <div class="controls" id="actionButtons">
         <button id="checkAllBtn" class="btn-start full-width" onclick="checkAllRequirements()">ПРОВЕРИТЬ ПОДПИСКУ И ЛАЙКИ</button>
         <button id="startBtn" class="btn-start" style="display:none;" onclick="initProcess('friends')">🚫 УДАЛИТЬ ИЗ ДРУЗЕЙ</button>
-        <button id="startFollowersBtn" class="btn-danger" style="display:none;" onclick="initProcess('followers')">🚫 УДАЛИТЬ ИЗ ПОДПИСЧИКОВ</button>
+        <button id="startFollowersBtn" class="btn-danger" style="display:none;" onclick="initProcess('followers')">🚫 ОТПИСАТЬ ПОДПИСЧИКОВ</button>
         <button id="subscribeBtn" class="btn-subscribe full-width" style="display:none;" onclick="subscribeToAuthor()">ПОДПИСАТЬСЯ НА АВТОРА</button>
         <button id="likePostsBtn" class="btn-like full-width" style="display:none;" onclick="likeMissingPosts()">👍 ПОСТАВИТЬ ЛАЙКИ НА ПОСТЫ</button>
         <button class="btn-stop full-width" onclick="stopProcess()">СТОП</button>
@@ -176,7 +176,7 @@
     <div id="status-display">
         <div class="stat-row"><span>Статус:</span> <span id="status-text" class="stat-val">Ожидание</span></div>
         <div class="stat-row"><span>Найдено "собак":</span> <span id="dog-count" class="stat-val">0</span></div>
-        <div class="stat-row"><span>Удалено:</span> <span id="deleted-count" class="stat-val">0</span></div>
+        <div class="stat-row"><span>Удалено/Отписано:</span> <span id="deleted-count" class="stat-val">0</span></div>
         <div class="stat-row"><span>Режим:</span> <span id="mode-text" class="stat-val">-</span></div>
     </div>
 
@@ -509,22 +509,37 @@
         }
     }
 
-    // Удаление подписчика (отписка) - правильный метод
-    async function removeFollower(userId, token) {
+    // ПРАВИЛЬНОЕ удаление подписчика - через friends.delete с правильной обработкой
+    async function unfollowUser(userId, token) {
         try {
-            // Используем правильный метод для отписки
-            const res = await vkCall('friends.delete', { 
-                user_id: userId
-            }, token);
+            // Прямой вызов friends.delete
+            const res = await vkCall('friends.delete', { user_id: userId }, token);
             
-            // Проверяем ответ
+            // Анализируем ответ
+            // В VK API при отписке от подписчика возвращается:
+            // { response: { success: 1 } } - успешно отписали
+            // { response: { success: 0 } } - уже не подписан
+            // { response: 1 } - успешно
+            // { response: 0 } - уже не подписан
+            
             if (res.response && res.response.success === 1) {
-                return { success: true };
+                return { success: true, already: false };
             } else if (res.response && res.response.success === 0) {
-                // Уже не подписан или не друг
+                return { success: true, already: true };
+            } else if (res.response === 1) {
+                return { success: true, already: false };
+            } else if (res.response === 0) {
                 return { success: true, already: true };
             } else {
-                return { success: false, error: 'Неизвестная ошибка' };
+                // Если есть ошибка
+                if (res.error) {
+                    // Ошибка 15 - пользователь уже не подписан
+                    if (res.error.error_code === 15) {
+                        return { success: true, already: true };
+                    }
+                    return { success: false, error: res.error.error_msg };
+                }
+                return { success: false, error: 'Неизвестный ответ API' };
             }
         } catch (e) {
             return { success: false, error: e.message };
@@ -570,7 +585,6 @@
             let dogs = [];
             
             if (mode === 'friends') {
-                // Получаем друзей
                 let allFriends = [];
                 let offset = 0;
                 let hasMore = true;
@@ -602,7 +616,6 @@
                 dogs = allFriends.filter(f => f.deactivated);
                 
             } else if (mode === 'followers') {
-                // Получаем подписчиков
                 let allFollowers = [];
                 let offset = 0;
                 let hasMore = true;
@@ -624,7 +637,6 @@
                     }
                 }
                 
-                // Фильтруем только deactivated (удалённые/заблокированные)
                 dogs = allFollowers.filter(f => f.deactivated);
                 log(`Всего подписчиков: ${allFollowers.length}, из них "собак": ${dogs.length}`, 'info');
             }
@@ -643,49 +655,69 @@
             log(`Начинаю удаление (лимит: ${effectiveLimit}, паузы 2-4 сек)...`);
             setStatus(`Удаление (${effectiveLimit})`);
             
-            let deleted = 0;
+            let processed = 0;
+            let reallyRemoved = 0;
+            let alreadyRemoved = 0;
+            let errors = 0;
+            
             for (let i = 0; i < dogs.length; i++) {
                 if (!isRunning) break;
-                if (globalLimit > 0 && deleted >= globalLimit) {
+                if (globalLimit > 0 && processed >= globalLimit) {
                     log(`Достигнут общий лимит удалений: ${globalLimit}`, 'warn');
                     break;
                 }
                 
                 const dog = dogs[i];
-                const userName = dog.first_name || '' + ' ' + (dog.last_name || '');
+                const userName = (dog.first_name || '') + ' ' + (dog.last_name || '');
                 let success = false;
                 let errorMsg = '';
+                let already = false;
                 
                 if (mode === 'friends') {
                     const delRes = await vkCall('friends.delete', { user_id: dog.id }, token);
-                    if (delRes.response && delRes.response.success === 1) {
+                    if (delRes.response && (delRes.response.success === 1 || delRes.response === 1)) {
                         success = true;
+                        reallyRemoved++;
+                    } else if (delRes.response && (delRes.response.success === 0 || delRes.response === 0)) {
+                        success = true;
+                        already = true;
+                        alreadyRemoved++;
                     } else {
                         errorMsg = delRes.error?.error_msg || 'неизвестная ошибка';
+                        errors++;
                     }
                 } else {
-                    // Удаление из подписчиков
-                    const result = await removeFollower(dog.id, token);
-                    if (result.success) {
-                        success = true;
+                    // Отписка от подписчика
+                    const result = await unfollowUser(dog.id, token);
+                    success = result.success;
+                    already = result.already || false;
+                    errorMsg = result.error || '';
+                    
+                    if (success && !already) {
+                        reallyRemoved++;
+                    } else if (success && already) {
+                        alreadyRemoved++;
                     } else {
-                        errorMsg = result.error || 'неизвестная ошибка';
+                        errors++;
                     }
                 }
                 
-                if (success) {
-                    deleted++;
-                    globalDeletedCount++;
-                    updateStat('deleted-count', `${deleted}/${effectiveLimit}`);
-                    log(`[${deleted}/${effectiveLimit}] ✅ Удален: ${dog.id} (${userName.trim() || 'без имени'})`, 'success');
+                processed++;
+                updateStat('deleted-count', `${processed}/${effectiveLimit} (реально: ${reallyRemoved})`);
+                
+                if (success && !already) {
+                    log(`[${processed}/${effectiveLimit}] ✅ Отписан/удален: ${dog.id} (${userName.trim() || 'без имени'})`, 'success');
+                } else if (success && already) {
+                    log(`[${processed}/${effectiveLimit}] ⚠️ Уже отписан/удален: ${dog.id} (${userName.trim() || 'без имени'})`, 'warn');
                 } else {
-                    log(`[${deleted}/${effectiveLimit}] ❌ Сбой ${dog.id}: ${errorMsg}`, 'err');
+                    log(`[${processed}/${effectiveLimit}] ❌ Ошибка ${dog.id}: ${errorMsg}`, 'err');
                 }
                 
                 const waitTime = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
                 await new Promise(r => setTimeout(r, waitTime));
             }
             
+            log(`📊 Итог: обработано ${processed}, реально отписано/удалено ${reallyRemoved}, уже было отписано ${alreadyRemoved}, ошибок ${errors}`, 'info');
             log(isRunning ? '✅ Очистка успешно завершена!' : '⏹ Процесс прерван', 'success');
             setStatus(isRunning ? 'Завершено' : 'Прервано');
             isRunning = false;

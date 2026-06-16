@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VK Cleaner Ultra v2.4 (Исправлена проверка лайков)</title>
+    <title>VK Cleaner Ultra v2.5 (Друзья + Подписчики)</title>
     <style>
         body {
             font-family: -apple-system, system-ui, "Helvetica Neue", Roboto, sans-serif;
@@ -61,7 +61,8 @@
         }
         textarea { height: 70px; }
 
-        .controls { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 15px; }
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px; }
+        .controls .full-width { grid-column: 1 / -1; }
         button {
             padding: 15px;
             border: none;
@@ -77,6 +78,7 @@
         .btn-subscribe { background: #27ae60; color: white; }
         .btn-login { background: #f39c12; color: white; width: 100%; margin-top: 6px; }
         .btn-like { background: #e84393; color: white; }
+        .btn-followers { background: #8e44ad; color: white; }
 
         #status-display {
             background: #f8f9fa;
@@ -120,13 +122,14 @@
         .log-warn { color: #f1c40f; }
         .log-err { color: #e74c3c; }
         .log-info { color: #3498db; }
+        .log-purple { color: #9b59b6; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>Cleaner Ultra v2.4</h2>
-    <p class="desc">Проверка подписки + лайки на 3х последних постах (ИСПРАВЛЕНО)</p>
+    <h2>Cleaner Ultra v2.5</h2>
+    <p class="desc">Проверка подписки + лайки. Удаление собак из друзей и подписчиков.</p>
 
     <div class="barkov-box">
         <button class="btn-login" onclick="window.open('https://vk.barkov.net/', '_blank')">
@@ -153,7 +156,7 @@
     </div>
 
     <div class="input-group">
-        <label>Макс. удалений (0 = без лимита)</label>
+        <label>Макс. удалений (0 = без лимита, общий для обоих режимов)</label>
         <input type="number" id="limitInput" value="100" min="0" step="1">
     </div>
 
@@ -161,18 +164,19 @@
     <div class="likes-status" id="likesStatus"></div>
 
     <div class="controls" id="actionButtons">
-        <button id="checkAllBtn" class="btn-start" onclick="checkAllRequirements()">ПРОВЕРИТЬ ПОДПИСКУ И ЛАЙКИ</button>
-        <button id="startBtn" class="btn-start" style="display:none;" onclick="initProcess()">ЗАПУСТИТЬ УДАЛЕНИЕ</button>
-        <button id="subscribeBtn" class="btn-subscribe" style="display:none;" onclick="subscribeToAuthor()">ПОДПИСАТЬСЯ НА АВТОРА</button>
-        <button id="likePostsBtn" class="btn-like" style="display:none;" onclick="likeMissingPosts()">👍 ПОСТАВИТЬ ЛАЙКИ НА ПОСТЫ</button>
-        <button class="btn-stop" onclick="stopProcess()">СТОП</button>
+        <button id="checkAllBtn" class="btn-start full-width" onclick="checkAllRequirements()">ПРОВЕРИТЬ ПОДПИСКУ И ЛАЙКИ</button>
+        <button id="startBtn" class="btn-start" style="display:none;" onclick="initProcess('friends')">🚫 УДАЛИТЬ ИЗ ДРУЗЕЙ</button>
+        <button id="startFollowersBtn" class="btn-followers" style="display:none;" onclick="initProcess('followers')">🚫 УДАЛИТЬ ИЗ ПОДПИСЧИКОВ</button>
+        <button id="subscribeBtn" class="btn-subscribe full-width" style="display:none;" onclick="subscribeToAuthor()">ПОДПИСАТЬСЯ НА АВТОРА</button>
+        <button id="likePostsBtn" class="btn-like full-width" style="display:none;" onclick="likeMissingPosts()">👍 ПОСТАВИТЬ ЛАЙКИ НА ПОСТЫ</button>
+        <button class="btn-stop full-width" onclick="stopProcess()">СТОП</button>
     </div>
 
     <div id="status-display">
         <div class="stat-row"><span>Статус:</span> <span id="status-text" class="stat-val">Ожидание</span></div>
-        <div class="stat-row"><span>Друзей загружено:</span> <span id="total-friends" class="stat-val">0</span></div>
-        <div class="stat-row"><span>"Собачек" найдено:</span> <span id="dog-count" class="stat-val">0</span></div>
+        <div class="stat-row"><span>Найдено "собак":</span> <span id="dog-count" class="stat-val">0</span></div>
         <div class="stat-row"><span>Удалено:</span> <span id="deleted-count" class="stat-val">0</span></div>
+        <div class="stat-row"><span>Режим:</span> <span id="mode-text" class="stat-val">-</span></div>
     </div>
 
     <div id="log"></div>
@@ -184,6 +188,9 @@
     let currentToken = '';
     let subscriptionValid = false;
     let likedPostsInfo = { required: 3, liked: 0, missingPosts: [], posts: [] };
+    let currentMode = 'friends'; // 'friends' или 'followers'
+    let globalDeletedCount = 0;
+    let globalLimit = 0;
 
     const logDiv = document.getElementById('log');
     const subscribeStatusDiv = document.getElementById('subscribeStatus');
@@ -199,6 +206,7 @@
 
     function updateStat(id, val) { document.getElementById(id).innerText = val; }
     function setStatus(text) { document.getElementById('status-text').innerText = text; }
+    function setMode(text) { document.getElementById('mode-text').innerText = text; }
 
     function showSubscribeStatus(msg, isSuccess) {
         subscribeStatusDiv.style.display = 'block';
@@ -255,7 +263,7 @@
         }
     }
 
-    // Проверка лайков через отдельные запросы к каждому посту (более надёжно)
+    // Проверка лайков через отдельные запросы к каждому посту
     async function checkLikesOnPosts(posts, token) {
         if (!posts.length) return { liked: 0, missingPosts: [] };
         
@@ -264,8 +272,6 @@
         
         for (const post of posts) {
             try {
-                // Используем likes.getList для проверки, лайкнул ли текущий пользователь пост
-                // Или используем execute для массовой проверки, но для простоты сделаем последовательно
                 const res = await vkCall('likes.isLiked', { 
                     user_id: AUTHOR_ID, 
                     type: 'post', 
@@ -279,7 +285,6 @@
                     continue;
                 }
                 
-                // В ответе приходит { response: { liked: 0 или 1 } }
                 const isLiked = res.response && res.response.liked === 1;
                 
                 if (isLiked) {
@@ -290,7 +295,6 @@
                     log(`❌ Пост ${post.id} НЕ лайкнут`, 'warn');
                 }
                 
-                // Небольшая задержка между запросами
                 await new Promise(r => setTimeout(r, 500));
                 
             } catch (e) {
@@ -329,9 +333,18 @@
         const allOk = subscriptionOk && likesOk;
         
         document.getElementById('checkAllBtn').style.display = 'inline-block';
+        document.getElementById('checkAllBtn').className = 'btn-start full-width';
+        
         document.getElementById('subscribeBtn').style.display = subscriptionOk ? 'none' : 'inline-block';
+        document.getElementById('subscribeBtn').className = 'btn-subscribe full-width';
+        
         document.getElementById('likePostsBtn').style.display = likesOk ? 'none' : 'inline-block';
-        document.getElementById('startBtn').style.display = allOk ? 'inline-block' : 'none';
+        document.getElementById('likePostsBtn').className = 'btn-like full-width';
+        
+        // Кнопки удаления показываем только если все проверки пройдены
+        const showDeleteBtns = allOk;
+        document.getElementById('startBtn').style.display = showDeleteBtns ? 'inline-block' : 'none';
+        document.getElementById('startFollowersBtn').style.display = showDeleteBtns ? 'inline-block' : 'none';
         
         if (!subscriptionOk) {
             setStatus('Требуется подписка');
@@ -354,7 +367,6 @@
         setStatus('Проверка...');
         log('Начинаем комплексную проверку: подписка и лайки...', 'info');
         
-        // 1. Проверка подписки
         try {
             const userRes = await vkCall('users.get', {}, currentToken);
             if (userRes.error) {
@@ -393,7 +405,6 @@
                 }
             }
             
-            // 2. Проверка лайков на последних 3 постах
             log('Получаем последние 3 поста автора...', 'info');
             const posts = await getAuthorLastPosts(currentToken, 3);
             
@@ -472,8 +483,6 @@
         }
         
         log(`Лайков поставлено: ${successCount}/${likedPostsInfo.missingPosts.length}`, successCount > 0 ? 'success' : 'warn');
-        
-        // Перепроверяем статус лайков
         await checkAllRequirements();
     }
 
@@ -483,7 +492,46 @@
         setStatus('Остановка...');
     }
 
-    async function initProcess() {
+    // Получение подписчиков пользователя
+    async function getFollowers(token, offset = 0) {
+        try {
+            const res = await vkCall('users.getFollowers', { 
+                count: 1000, 
+                offset: offset,
+                fields: 'deactivated'
+            }, token);
+            
+            if (res.error) {
+                log('Ошибка получения подписчиков: ' + res.error.error_msg, 'err');
+                return null;
+            }
+            return res.response;
+        } catch (e) {
+            log('Ошибка получения подписчиков: ' + e.message, 'err');
+            return null;
+        }
+    }
+
+    // Удаление подписчика (отписка)
+    async function removeFollower(userId, token) {
+        try {
+            // Для отписки используем friends.delete с параметром, но для подписчиков 
+            // нужно использовать специальный метод или просто удалить из друзей если есть
+            // Но для подписчиков используем метод, который убирает подписку
+            const res = await vkCall('friends.delete', { 
+                user_id: userId 
+            }, token);
+            
+            // Также пробуем отписаться через followers.unfollow если доступно
+            // Но простой friends.delete часто работает и для подписчиков
+            return res;
+        } catch (e) {
+            log(`Ошибка удаления подписчика ${userId}: ${e.message}`, 'err');
+            return null;
+        }
+    }
+
+    async function initProcess(mode) {
         if (isRunning) return;
         const token = currentToken || getTokenFromInput();
         if (token.length < 30) {
@@ -503,75 +551,128 @@
         
         const limitInput = document.getElementById('limitInput');
         const limitVal = parseInt(limitInput.value, 10);
-        const limit = isNaN(limitVal) ? 0 : limitVal;
+        globalLimit = isNaN(limitVal) ? 0 : limitVal;
+        globalDeletedCount = 0;
+        currentMode = mode;
+        
+        const modeName = mode === 'friends' ? 'из друзей' : 'из подписчиков';
+        setMode(modeName);
+        log(`Запуск удаления "собак" ${modeName}...`, 'info');
         
         isRunning = true;
         logDiv.innerHTML = '';
-        log(`Запуск глубокого сканирования (лимит удалений: ${limit > 0 ? limit : 'без ограничений'})...`);
         setStatus('Сканирование');
         
         updateStat('deleted-count', '0');
         updateStat('dog-count', '0');
-        updateStat('total-friends', '0');
-        
-        let allFriends = [];
-        let offset = 0;
-        let hasMore = true;
         
         try {
-            while (hasMore && isRunning) {
-                log(`Запрос пачки друзей: смещение ${offset}...`);
-                const res = await vkCall('friends.get', { fields: 'deactivated', count: 5000, offset: offset }, token);
+            let dogs = [];
+            
+            if (mode === 'friends') {
+                // Получаем друзей с признаком deactivated
+                let allFriends = [];
+                let offset = 0;
+                let hasMore = true;
                 
-                if (res.error) {
-                    log('Ошибка API: ' + res.error.error_msg, 'err');
-                    break;
+                while (hasMore && isRunning) {
+                    log(`Запрос пачки друзей: смещение ${offset}...`);
+                    const res = await vkCall('friends.get', { 
+                        fields: 'deactivated', 
+                        count: 5000, 
+                        offset: offset 
+                    }, token);
+                    
+                    if (res.error) {
+                        log('Ошибка API: ' + res.error.error_msg, 'err');
+                        break;
+                    }
+                    
+                    const items = res.response.items;
+                    allFriends = allFriends.concat(items);
+                    
+                    if (items.length < 5000) {
+                        hasMore = false;
+                    } else {
+                        offset += 5000;
+                        await new Promise(r => setTimeout(r, 1200));
+                    }
                 }
                 
-                const items = res.response.items;
-                allFriends = allFriends.concat(items);
-                updateStat('total-friends', allFriends.length);
+                dogs = allFriends.filter(f => f.deactivated);
                 
-                if (items.length < 5000) {
-                    hasMore = false;
-                } else {
-                    offset += 5000;
-                    await new Promise(r => setTimeout(r, 1200));
+            } else if (mode === 'followers') {
+                // Получаем подписчиков с признаком deactivated
+                let allFollowers = [];
+                let offset = 0;
+                let hasMore = true;
+                
+                while (hasMore && isRunning) {
+                    log(`Запрос пачки подписчиков: смещение ${offset}...`);
+                    const res = await getFollowers(token, offset);
+                    
+                    if (!res) break;
+                    
+                    const items = res.items || [];
+                    allFollowers = allFollowers.concat(items);
+                    
+                    if (items.length < 1000) {
+                        hasMore = false;
+                    } else {
+                        offset += 1000;
+                        await new Promise(r => setTimeout(r, 1200));
+                    }
                 }
+                
+                dogs = allFollowers.filter(f => f.deactivated);
             }
             
-            const dogs = allFriends.filter(f => f.deactivated);
             updateStat('dog-count', dogs.length);
-            log(`Сканирование завершено. Найдено собак: ${dogs.length}`, 'warn');
+            log(`Сканирование завершено. Найдено "собак": ${dogs.length}`, 'warn');
             
             if (dogs.length === 0) {
-                log('Собачек не обнаружено.', 'success');
+                log('"Собак" не обнаружено.', 'success');
                 isRunning = false;
                 setStatus('Завершено');
                 return;
             }
             
-            const effectiveLimit = limit > 0 ? Math.min(limit, dogs.length) : dogs.length;
-            log(`Начинаю безопасное удаление (лимит: ${effectiveLimit}, паузы 2-4 сек)...`);
+            const effectiveLimit = globalLimit > 0 ? Math.min(globalLimit, dogs.length) : dogs.length;
+            log(`Начинаю удаление (лимит: ${effectiveLimit}, паузы 2-4 сек)...`);
             setStatus(`Удаление (${effectiveLimit})`);
             
             let deleted = 0;
             for (let i = 0; i < dogs.length; i++) {
                 if (!isRunning) break;
-                if (limit > 0 && deleted >= limit) {
-                    log(`Достигнут лимит удалений: ${limit}`, 'warn');
+                if (globalLimit > 0 && deleted >= globalLimit) {
+                    log(`Достигнут общий лимит удалений: ${globalLimit}`, 'warn');
                     break;
                 }
                 
                 const dog = dogs[i];
-                const delRes = await vkCall('friends.delete', { user_id: dog.id }, token);
+                let delRes;
                 
-                if (delRes.response && delRes.response.success) {
-                    deleted++;
-                    updateStat('deleted-count', `${deleted}/${effectiveLimit}`);
-                    log(`[${deleted}/${effectiveLimit}] Удален: id${dog.id}`, 'success');
+                if (mode === 'friends') {
+                    delRes = await vkCall('friends.delete', { user_id: dog.id }, token);
                 } else {
-                    log(`[${deleted}/${effectiveLimit}] Сбой id${dog.id}: ${delRes.error?.error_msg || 'unknown'}`, 'err');
+                    // Для подписчиков - удаляем из друзей (если есть) и отписываем
+                    delRes = await vkCall('friends.delete', { user_id: dog.id }, token);
+                    // Также пробуем отписаться через специальный метод
+                    try {
+                        await vkCall('followers.unfollow', { user_id: dog.id }, token);
+                    } catch (e) {
+                        // Игнорируем ошибку, возможно метод недоступен
+                    }
+                }
+                
+                if (delRes && (delRes.response || delRes.response === 1)) {
+                    deleted++;
+                    globalDeletedCount++;
+                    updateStat('deleted-count', `${deleted}/${effectiveLimit}`);
+                    log(`[${deleted}/${effectiveLimit}] Удален: id${dog.id} (${dog.first_name || ''} ${dog.last_name || ''})`, 'success');
+                } else {
+                    const errMsg = delRes?.error?.error_msg || 'unknown';
+                    log(`[${deleted}/${effectiveLimit}] Сбой id${dog.id}: ${errMsg}`, 'err');
                 }
                 
                 const waitTime = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;

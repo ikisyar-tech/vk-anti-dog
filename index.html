@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VK Cleaner Ultra v2.8 (Правильная отписка)</title>
+    <title>VK Cleaner Ultra v2.9 (Работает!)</title>
     <style>
         body {
             font-family: -apple-system, system-ui, "Helvetica Neue", Roboto, sans-serif;
@@ -129,8 +129,8 @@
 <body>
 
 <div class="card">
-    <h2>Cleaner Ultra v2.8</h2>
-    <p class="desc">Правильная отписка от подписчиков без бана</p>
+    <h2>Cleaner Ultra v2.9</h2>
+    <p class="desc">Правильная отписка от подписчиков через ban + unban</p>
 
     <div class="barkov-box">
         <button class="btn-login" onclick="window.open('https://vk.barkov.net/', '_blank')">
@@ -509,38 +509,36 @@
         }
     }
 
-    // ПРАВИЛЬНОЕ удаление подписчика - через friends.delete с правильной обработкой
-    async function unfollowUser(userId, token) {
+    // ПРАВИЛЬНАЯ отписка от подписчика через ban (это единственный работающий способ)
+    async function unfollowUserCorrect(userId, token) {
         try {
-            // Прямой вызов friends.delete
-            const res = await vkCall('friends.delete', { user_id: userId }, token);
+            // Шаг 1: Баним пользователя (это отписывает его)
+            const banRes = await vkCall('account.ban', { 
+                owner_id: userId 
+            }, token);
             
-            // Анализируем ответ
-            // В VK API при отписке от подписчика возвращается:
-            // { response: { success: 1 } } - успешно отписали
-            // { response: { success: 0 } } - уже не подписан
-            // { response: 1 } - успешно
-            // { response: 0 } - уже не подписан
-            
-            if (res.response && res.response.success === 1) {
-                return { success: true, already: false };
-            } else if (res.response && res.response.success === 0) {
-                return { success: true, already: true };
-            } else if (res.response === 1) {
-                return { success: true, already: false };
-            } else if (res.response === 0) {
-                return { success: true, already: true };
-            } else {
-                // Если есть ошибка
-                if (res.error) {
-                    // Ошибка 15 - пользователь уже не подписан
-                    if (res.error.error_code === 15) {
-                        return { success: true, already: true };
-                    }
-                    return { success: false, error: res.error.error_msg };
+            if (banRes.error) {
+                // Если ошибка 15 - пользователь уже в бане или не подписан
+                if (banRes.error.error_code === 15) {
+                    return { success: true, already: true };
                 }
-                return { success: false, error: 'Неизвестный ответ API' };
+                return { success: false, error: banRes.error.error_msg };
             }
+            
+            // Шаг 2: Разбаним пользователя (чтобы не оставался в бане)
+            // Важно! Разбан НЕ возвращает в подписчики, а просто убирает из бана
+            const unbanRes = await vkCall('account.unban', { 
+                owner_id: userId 
+            }, token);
+            
+            if (unbanRes.error) {
+                // Даже если разбан не удался, пользователь уже отписан
+                log(`⚠️ Разбан не удался для ${userId}, но пользователь отписан`, 'warn');
+                return { success: true, already: false };
+            }
+            
+            return { success: true, already: false };
+            
         } catch (e) {
             return { success: false, error: e.message };
         }
@@ -652,7 +650,7 @@
             }
             
             const effectiveLimit = globalLimit > 0 ? Math.min(globalLimit, dogs.length) : dogs.length;
-            log(`Начинаю удаление (лимит: ${effectiveLimit}, паузы 2-4 сек)...`);
+            log(`Начинаю удаление (лимит: ${effectiveLimit}, паузы 3-5 сек)...`);
             setStatus(`Удаление (${effectiveLimit})`);
             
             let processed = 0;
@@ -687,8 +685,8 @@
                         errors++;
                     }
                 } else {
-                    // Отписка от подписчика
-                    const result = await unfollowUser(dog.id, token);
+                    // Отписка от подписчика через ban + unban
+                    const result = await unfollowUserCorrect(dog.id, token);
                     success = result.success;
                     already = result.already || false;
                     errorMsg = result.error || '';
@@ -713,7 +711,8 @@
                     log(`[${processed}/${effectiveLimit}] ❌ Ошибка ${dog.id}: ${errorMsg}`, 'err');
                 }
                 
-                const waitTime = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
+                // Увеличенная задержка для безопасности
+                const waitTime = Math.floor(Math.random() * (5000 - 3000 + 1)) + 3000;
                 await new Promise(r => setTimeout(r, waitTime));
             }
             
